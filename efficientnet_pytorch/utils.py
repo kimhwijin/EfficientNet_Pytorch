@@ -7,25 +7,19 @@ from functools import partial
 import re
 from torch.utils import model_zoo
 
-GlobalParams = collections.namedtuple("GlobalParams", 
-[
-    'batch_norm_momentum', 'batch_norm_epsilon', 'dropout_rate', 'data_format',
-    'num_classes', 'width_coefficient', 'depth_coefficient', 'depth_divisor',
-    'min_depth', 'survival_prob', 'relu_fn', 'batch_norm', 'use_se',
-    'se_coefficient', 'local_pooling', 'condconv_num_experts',
-    'clip_projection_output', 'blocks_args', 'fix_head_stem', 'use_bfloat16'
-])
+GlobalParams = collections.namedtuple('GlobalParams', [
+    'width_coefficient', 'depth_coefficient', 'image_size', 'dropout_rate',
+    'num_classes', 'batch_norm_momentum', 'batch_norm_epsilon',
+    'drop_connect_rate', 'depth_divisor', 'min_depth', 'include_top'])
 
-# 기본값 모두 None
-GlobalParams.__new__.__defaults__  = (None, ) * len(GlobalParams._fields)
+# Parameters for an individual model block
+BlockArgs = collections.namedtuple('BlockArgs', [
+    'num_repeat', 'kernel_size', 'stride', 'expand_ratio',
+    'input_filters', 'output_filters', 'se_ratio', 'id_skip'])
 
-BlockArgs = collections.namedtuple('BlockArgs', 
-[
-    'kernel_size', 'num_repeat', 'input_filters', 'output_filters',
-    'expand_ratio', 'id_skip', 'strides', 'se_ratio', 'conv_type', 'fused_conv',
-    'space2depth', 'condconv', 'activation_fn'
-])
-BlockArgs.__new__.__defaults__ = (None, ) * len(BlockArgs._fields)
+# Set GlobalParams and BlockArgs's defaults
+GlobalParams.__new__.__defaults__ = (None,) * len(GlobalParams._fields)
+BlockArgs.__new__.__defaults__ = (None,) * len(BlockArgs._fields)
 
 if hasattr(nn, 'SiLU'):
     Swish = nn.SiLU
@@ -63,7 +57,7 @@ def round_filters(filters, global_params):
         new_filters: New filters number after caculating.
     """
 
-    multiplier = global_params.width_coeffcient
+    multiplier = global_params.width_coefficient
     if not multiplier:
         return filters
     
@@ -328,7 +322,7 @@ class BlockDecoder(object):
         args = [
             'r%d' % block.num_repeat,
             'k%d' % block.kernel_size,
-            's%d%d' % (block.strides[0], block.strides[1]),
+            's%d%d' % (block.stride[0], block.stride[1]),
             'e%s' % block.expand_ratio,
             'i%d' % block.input_filters,
             'o%d' % block.output_filters,

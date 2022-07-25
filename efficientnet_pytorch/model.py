@@ -35,6 +35,7 @@ class MBConvBlock(nn.Module):
     """
 
     def __init__(self, block_args, global_params, image_size=None):
+        super().__init__()
         self._block_args = block_args
         self._bn_mom = 1. - global_params.batch_norm_momentum
         self._bn_eps = global_params.batch_norm_epsilon
@@ -43,7 +44,7 @@ class MBConvBlock(nn.Module):
 
         #Expansion phase (Inverted Bottleneck)
         inp = self._block_args.input_filters # number of input channels
-        oup = self._block_args.input_filters * self._block_args.expand_ratios # number of output channels
+        oup = self._block_args.input_filters * self._block_args.expand_ratio # number of output channels
         if self._block_args.expand_ratio != 1:
             Conv2d = get_same_padding_conv2d(image_size=image_size)
             self._expand_conv = Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False)
@@ -60,7 +61,7 @@ class MBConvBlock(nn.Module):
         # Squeeze and Excitation layer, if desired
         if self.has_se:
             Conv2d = get_same_padding_conv2d(image_size=(1,1))
-            num_sqeezed_channels = max(1, int(self._block_args.input_filters * self._block_args.se_ratio))
+            num_sqeezed_channels = max(1, int(oup * self._block_args.se_ratio))
             self._se_reduce = Conv2d(in_channels=oup, out_channels=num_sqeezed_channels, kernel_size=1)
             self._se_expand = Conv2d(in_channels=num_sqeezed_channels, out_channels=oup, kernel_size=1)
         
