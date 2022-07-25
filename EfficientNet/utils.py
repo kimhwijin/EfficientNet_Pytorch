@@ -526,3 +526,4 @@ def load_pretrained_weights(model, model_name, weights_path=None, load_fc=True, 
     assert not ret.unexpected_keys, 'Missing keys when loading pretrained wieghts: {}'.format(ret.unexpected_keys)
     if verbose:
         print('Loaded pretrained weights for {}'.format(model_name))
+    
