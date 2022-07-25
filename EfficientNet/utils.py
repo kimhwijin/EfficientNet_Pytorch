@@ -1,3 +1,4 @@
+from ast import Global
 import math
 import collections
 from numpy import isin
@@ -374,4 +375,74 @@ class BlockDecoder(object):
             block_strings.append(BlockDecoder._encode_block_string(block))
         return block_strings
     
+
+def efficient_params(model_name):
+    """Map EfficientNet Model name to parameter coefficients.
+
+    Args:
+        model_name (str): Model name to be queried.
+    
+    Returns:
+        params_dict[model_name]: A (width, depth, res, dropout) tuple.
+    """
+    params_dict = {
+        # Coefficients:   width,depth,res,dropout
+        'efficientnet-b0': (1.0, 1.0, 224, 0.2),
+        'efficientnet-b1': (1.0, 1.1, 240, 0.2),
+        'efficientnet-b2': (1.1, 1.2, 260, 0.3),
+        'efficientnet-b3': (1.2, 1.4, 300, 0.3),
+        'efficientnet-b4': (1.4, 1.8, 380, 0.4),
+        'efficientnet-b5': (1.6, 2.2, 456, 0.4),
+        'efficientnet-b6': (1.8, 2.6, 528, 0.5),
+        'efficientnet-b7': (2.0, 3.1, 600, 0.5),
+        'efficientnet-b8': (2.2, 3.6, 672, 0.5),
+        'efficientnet-l2': (4.3, 5.3, 800, 0.5),
+    }
+    return params_dict[model_name]
+
+
+def efficientnet(width_coefficient=None, depth_coefficient=None, image_size=None, dropout_rate=0.2, drop_connect_rate=0.2, num_classes=1000, include_top=True):
+    """Create BlockArgs and GlobalParams for efficient model.
+
+    Args:
+        width_coefficient (float)
+        depth_coefficient (float)
+        image_size (int)
+        dropout_rate (float)
+        drop_connent_rate (float)
+        num_classes (int)
+    
+    Returns:
+        blocks_args, global_params.
+    """
+
+    # Blocks args for the whole model(efficientnet-b0 by default)
+    # It will be modified in the construction of EfficientNet Class according to model
+    blocks_args = [
+        'r1_k3_s11_e1_i32_o16_se0.25',
+        'r2_k3_s22_e6_i16_o24_se0.25',
+        'r2_k5_s22_e6_i24_o40_se0.25',
+        'r3_k3_s22_e6_i40_o80_se0.25',
+        'r3_k5_s11_e6_i80_o112_se0.25',
+        'r4_k5_s22_e6_i112_o192_se0.25',
+        'r1_k3_s11_e6_i192_o320_se0.25',
+    ]
+    blocks_args = BlockDecoder.decode(blocks_args)
+
+    global_params = GlobalParams(
+        width_coefficient=width_coefficient,
+        depth_coefficient=depth_coefficient,
+        image_size=image_size,
+        dropout_rate=dropout_rate,
+
+        num_classes=num_classes,
+        batch_norm_momentum=0.99,
+        batch_norm_epsilon=1e-3,
+        drop_connect_rate=drop_connect_rate,
+        depth_divisor=8,
+        min_depth=None,
+        include_top=include_top
+    )
+
+    return blocks_args, global_params
 
