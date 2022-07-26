@@ -1,3 +1,4 @@
+from glob import glob
 import math
 import collections
 import torch
@@ -10,7 +11,7 @@ from torch.utils import model_zoo
 GlobalParams = collections.namedtuple('GlobalParams', [
     'width_coefficient', 'depth_coefficient', 'image_size', 'dropout_rate',
     'num_classes', 'batch_norm_momentum', 'batch_norm_epsilon',
-    'drop_connect_rate', 'depth_divisor', 'min_depth', 'include_top'])
+    'drop_connect_rate', 'depth_divisor', 'min_depth', 'include_top', 'model_name'])
 
 # Parameters for an individual model block
 BlockArgs = collections.namedtuple('BlockArgs', [
@@ -97,7 +98,7 @@ def drop_connect(inputs, p, training):
         training (bool): The running mode.
     """
 
-    assert 0 <= p <= 1, 'p must be in range of [0,1]'
+    assert 0. <= p <= 1., 'p must be in range of [0,1]'
 
     if not training:
         return inputs
@@ -106,7 +107,7 @@ def drop_connect(inputs, p, training):
     survival_prob = 1. - p
     
     random_tensor = survival_prob
-    random_tensor += torch.rand([batch_size, 1, 1, 1], dtpe=inputs.dtype, device=inputs.device)
+    random_tensor += torch.rand([batch_size, 1, 1, 1], dtype=inputs.dtype, device=inputs.device)
     binary_tensor = torch.floor(random_tensor)
 
     # Unlike conventional way that multiply survival_prob at test time,
@@ -389,7 +390,6 @@ def efficient_params(model_name):
         'efficientnet-b6': (1.8, 2.6, 528, 0.5),
         'efficientnet-b7': (2.0, 3.1, 600, 0.5),
         'efficientnet-b8': (2.2, 3.6, 672, 0.5),
-        'efficientnet-l2': (4.3, 5.3, 800, 0.5),
     }
     return params_dict[model_name]
 
@@ -453,7 +453,7 @@ def get_model_params(model_name:str, override_params):
     if model_name.startswith('efficientnet'):
         w, d, s, p = efficient_params(model_name)
         blocks_args, global_params = efficientnet(width_coefficient=w, depth_coefficient=d, image_size=s, dropout_rate=p)
-
+        global_params = global_params._replace(model_name=model_name)
     else:
         raise NotImplementedError('model name is not pre-defined: {}'.format(model_name))
     if override_params:

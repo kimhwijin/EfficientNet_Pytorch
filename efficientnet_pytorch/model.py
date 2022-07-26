@@ -1,7 +1,9 @@
-from doctest import OutputChecker
-from random import triangular
-from tkinter import image_names
-from xml.dom import ValidationErr
+from email.encoders import encode_noop
+from turtle import forward
+from typing import OrderedDict
+from jwt import DecodeError
+from numpy import block
+from pytest import skip
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -17,8 +19,6 @@ from .utils import (
     MemoryEfficientSwish,
     calculate_output_image_size
 )
-
-
 VALID_MODELS = (
     'efficientnet-b0', 'efficientnet-b1', 'efficientnet-b2', 
     'efficientnet-b3', 'efficientnet-b4', 'efficientnet-b5', 
@@ -108,11 +108,12 @@ class MBConvBlock(nn.Module):
         x = self._project_conv(x)
         x = self._bn2(x)
 
+
         #Skip connection and drop connect
         input_filters, output_filters = self._block_args.input_filters, self._block_args.output_filters
         if self.id_skip and self._block_args.stride == 1 and input_filters == output_filters:
             # The combination of skip connection and drop connect brings about stochastic depth.
-            if drop_connect_rate:
+            if drop_connect_rate > 0.:
                 x = drop_connect(x, p=drop_connect_rate, training=self.training)
             x = x + inputs
         return x
@@ -194,8 +195,8 @@ class EfficientNet(nn.Module):
         self._bn1 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mon, eps=bn_eps)
 
         #Final linear layer
-        self._avg_pooling = nn.AdaptiveAvgPool2d(1)
         if self._global_params.include_top:
+            self._avg_pooling = nn.AdaptiveAvgPool2d(1)
             self._dropout = nn.Dropout(self._global_params.dropout_rate)
             self._fc = nn.Linear(out_channels, self._global_params.num_classes)
         
@@ -223,7 +224,6 @@ class EfficientNet(nn.Module):
             Dictionary of last intermediate features
             with reduction levels i in [1, 2, 3, 4, 5].
         """
-
         endpoints = dict()
 
         # stem
@@ -241,11 +241,10 @@ class EfficientNet(nn.Module):
             elif idx == len(self._blocks) - 1:
                 endpoints['reduction_{}'.format(len(endpoints) + 1)] = x
             prev_x = x
-        
+            
         # Head
         x = self._swish(self._bn1(self._conv_head(x)))
         endpoints['reduction_{}'.format(len(endpoints) + 1)] = x
-
         return endpoints
 
     def extract_features(self, inputs):
@@ -286,9 +285,10 @@ class EfficientNet(nn.Module):
 
         # Convolution layers
         x = self.extract_features(inputs)
+        
         #Pooling and final linear layer
-        x = self._avg_pooling(x)
         if self._global_params.include_top:
+            x = self._avg_pooling(x)
             x = x.flatten(start_dim=1)
             x = self._dropout(x)
             x = self._fc(x)
@@ -355,21 +355,19 @@ class EfficientNet(nn.Module):
         model._change_in_channels(in_channels)
         return model
 
+    @property
+    def image_size(self):
+        return self._global_params.image_size
     
-    @classmethod
-    def get_image_size(cls, model_name):
-        """Get the input image size for a given efficient net model.
-
-        Args:
-            model_name (str): Name for efficientnet.
-
-        Returns:
-            Input image size (resolution).
-        """
-        cls._check_model_name_is_valid(model_name)
-        _, _, res, _ = efficient_params(model_name)
-        return res
+    @property
+    def name(self):
+        return self._global_params.model_name
     
+    @property
+    def each_channels(self):
+        round_filters()
+
+
     @classmethod
     def _check_model_name_is_valid(cls, model_name):
         """Validates model name.
@@ -396,6 +394,89 @@ class EfficientNet(nn.Module):
             out_channels = round_filters(32, self._global_params)
             self._conv_stem = Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, stride=2, biase=False)
 
-
-
+class EfficientUnet(EfficientNet):
+    def __init__(self, blocks_args=None, global_params=None):
+        super().__init__(blocks_args=blocks_args, global_params=global_params)
         
+        skip_channels = self.extract_skip_channels()
+        last_channels = round_filters(1280, self._global_params)
+        bn_mom = 1. - global_params.batch_norm_momentum
+        bn_eps = global_params.batch_norm_epsilon
+        prev_skip_channel = skip_channels[-1]
+        self._decoder_blocks = nn.ModuleList([
+            DecodeBlock(in_channels=last_channels, skip_channels=prev_skip_channel, out_channels=prev_skip_channel, bn_mom=bn_mom, bn_eps=bn_eps)
+        ])
+
+        for skip_channel in reversed(skip_channels[:-1]):
+            self._decoder_blocks.append(
+                DecodeBlock(in_channels=prev_skip_channel, skip_channels=skip_channel, out_channels=skip_channel, bn_mom=bn_mom, bn_eps=bn_eps)
+            )
+            prev_skip_channel = skip_channel
+        
+        Conv2d = get_same_padding_conv2d(image_size=global_params.image_size)
+        self._conv_top = Conv2d(in_channels=skip_channel, out_channels=self._global_params.num_classes, kernel_size=1)
+        
+    def extract_features(self, inputs):
+        skip_conn = []
+
+        x = inputs
+        skip_conn.append(x)
+
+        x = self._swish(self._bn0(self._conv_stem(x)))
+        prev_x = x
+        # Blocks
+        for idx, block in enumerate(self._blocks):
+            drop_connect_rate = self._global_params.drop_connect_rate
+            if drop_connect_rate:
+                drop_connect_rate *= float(idx) / len(self._blocks)
+            
+            x = block(x, drop_connect_rate=drop_connect_rate)
+            if prev_x.size(2) > x.size(2): # if reduce
+                skip_conn.append(prev_x)
+            prev_x = x
+        
+        # Head
+        x = self._swish(self._bn1(self._conv_head(x)))
+
+        return x, skip_conn
+
+    def extract_skip_channels(self):
+        image_size = self._global_params.image_size
+        out_channels = [3,]
+
+        # stem
+        image_size = calculate_output_image_size(image_size, 2)
+
+        for block_args in self._blocks_args:
+            new_image_size = calculate_output_image_size(image_size, block_args.stride)
+            if image_size != new_image_size:
+                out_channels.append(round_filters(block_args.input_filters, self._global_params))
+        return out_channels
+
+    def forward(self, inputs):
+        x = inputs
+        x, skip_conns = self.extract_features(x)
+        for block, skip_conn in zip(self._decoder_blocks, reversed(skip_conns)):
+            x = block(x, skip_conn)
+        
+        x = self._conv_top(x)
+        return x
+        
+class DecodeBlock(nn.Module):
+    def __init__(self, in_channels, skip_channels, out_channels, bn_mom, bn_eps, image_size=None):
+        super().__init__()
+        Conv2d = get_same_padding_conv2d(image_size)
+        self._conv0 = Conv2d(in_channels=in_channels+skip_channels, out_channels=out_channels, kernel_size=3)
+        self._bn0 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
+        self._conv1 = Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=3)
+        self._bn1 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
+        self._swish = MemoryEfficientSwish()
+    
+    def forward(self, inputs, skip=None):
+        x = inputs
+        x = F.interpolate(x, scale_factor=2, mode='nearest')
+        if skip is not None:
+            x = torch.concat([x, skip], dim=1)
+        x = self._swish(self._bn0(self._conv0(x)))
+        x = self._swish(self._bn1(self._conv1(x)))
+        return x
